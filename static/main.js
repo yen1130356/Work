@@ -134,25 +134,43 @@ function renderStatsPanel(stats, status) {
 async function loadStats() {
     try {
         const res = await fetch('/api/stats');
-        if (!res.ok) throw new Error("後端回傳 500 錯誤");
+        if (!res.ok) return;
         const data = await res.json();
         
-        // 側邊欄需確認紅色 Badge 渲染
+        // 1. 更新側邊欄需確認項目的紅色數位貼紙
         const badge = document.getElementById('badge-count');
         if (badge) {
-            if (data.need_check_count > 0) {
-                badge.textContent = data.need_check_count;
+            if (data.badge_count > 0) {
+                badge.textContent = data.badge_count;
                 badge.style.display = 'inline-block';
             } else {
                 badge.style.display = 'none';
             }
         }
         
-        // 呼叫統一渲染核心
-        renderStatsPanel(data.status, data.status);
-
+        // 2. 渲染右上角最新數據更新提示與匯入報告卡片
+        if (data.status) {
+            const st = data.status;
+            
+            // 填入右上角狀態提示
+            const lblLatestDate = document.getElementById('lblLatestDate');
+            const lblUpdateTime = document.getElementById('lblUpdateTime');
+            if (lblLatestDate) lblLatestDate.textContent = st.latest_update;
+            if (lblUpdateTime) lblUpdateTime.textContent = "自動定時更新於 " + st.updated_at.split(' ')[1] || st.updated_at;
+            
+            // 填入最近一次數據匯入報告的標籤膠囊數字
+            const lblReportDetailTime = document.getElementById('lblReportDetailTime');
+            if (lblReportDetailTime) lblReportDetailTime.textContent = `(更新完成時間：${st.updated_at})`;
+            
+            if (document.getElementById('valExcelTotal')) {
+                document.getElementById('valExcelTotal').textContent = Number(st.excel_total).toLocaleString();
+                document.getElementById('valSuccessCount').textContent = Number(st.success_count).toLocaleString();
+                document.getElementById('valSkipCount').textContent = Number(st.skip_count).toLocaleString();
+                document.getElementById('valErrorCount').textContent = Number(st.error_count).toLocaleString();
+            }
+        }
     } catch (e) {
-        console.error("❌ 讀取全域指標狀態時發生異常:", e);
+        console.error("載入統計狀態失敗:", e);
     }
 }
 

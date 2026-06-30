@@ -345,15 +345,14 @@ def init_db():
 
     # 建立系統狀態表（用來記錄自動更新到哪一天）
     c.execute("""
-        CREATE TABLE IF NOT EXISTS system_status (
-            id SERIAL PRIMARY KEY,
-            latest_import_batch VARCHAR(100),
-            status_message TEXT,
-            total_rows INT DEFAULT 0,
-            success_rows INT DEFAULT 0,
-            skipped_rows INT DEFAULT 0,
-            failed_rows INT DEFAULT 0,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    CREATE TABLE IF NOT EXISTS system_status (
+        id SERIAL PRIMARY KEY,
+        latest_update TEXT,
+        excel_total INTEGER DEFAULT 0,
+        success_count INTEGER DEFAULT 0,
+        skip_count INTEGER DEFAULT 0,
+        error_count INTEGER DEFAULT 0,
+        updated_at TEXT
         )
     """)
     
@@ -809,6 +808,24 @@ def auto_sync():
         except Exception as clean_ex:
             print(f"⚠️ 批次 {b} 運行清洗規則失敗: {str(clean_ex)}")
 
+    # === 網頁同步成功後，更新數據匯入報告卡片 ===
+    try:
+        current_time_str = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        UPSERT_STATUS_SQL = """
+            INSERT INTO porter_system_status (key, value, updated_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (key) 
+            DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+        """
+        c.execute(UPSERT_STATUS_SQL, ('latest_sync_date', import_batch))
+        c.execute(UPSERT_STATUS_SQL, ('sync_total', str(total_excel_rows)))
+        c.execute(UPSERT_STATUS_SQL, ('sync_success', str(inserted)))
+        c.execute(UPSERT_STATUS_SQL, ('sync_skipped', str(skipped)))
+        c.execute(UPSERT_STATUS_SQL, ('sync_failed', str(errors)))
+        print(f"📌 [系統狀態] 網頁介面同步卡片數據已寫入資料庫。時間：{current_time_str}")
+    except Exception as status_ex:
+        print(f"❌ 網頁同步更新卡片數據失敗: {str(status_ex)}")
+
     conn.commit()
     conn.close()
     
@@ -959,6 +976,27 @@ def upload_file():
                     results[k] = results.get(k, 0) + v
             except Exception as clean_ex:
                 print(f"⚠️ 批次 {b} 運行清洗規則失敗: {str(clean_ex)}")
+
+        # === 手動上傳成功後，更新數據匯入報告卡片 ===
+        try:
+            current_time_str = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+            UPSERT_STATUS_SQL = """
+                INSERT INTO porter_system_status (key, value, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (key) 
+                DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+            """
+            # 手動上傳時，最新日期抓取受影響批次的第一個日期，若無則用當天
+            display_batch = list(affected_batches)[0] if affected_batches else date.today().strftime("%Y-%m-%d")
+            
+            c.execute(UPSERT_STATUS_SQL, ('latest_sync_date', display_batch))
+            c.execute(UPSERT_STATUS_SQL, ('sync_total', str(total_excel_rows)))
+            c.execute(UPSERT_STATUS_SQL, ('sync_success', str(inserted)))
+            c.execute(UPSERT_STATUS_SQL, ('sync_skipped', str(skipped)))
+            c.execute(UPSERT_STATUS_SQL, ('sync_failed', str(errors)))
+            print(f"📌 [系統狀態] 手動上傳 Excel 卡片數據已寫入資料庫。時間：{current_time_str}")
+        except Exception as status_ex:
+            print(f"❌ 手動上傳更新卡片數據失敗: {str(status_ex)}")
                 
         conn.commit()
         conn.close()
@@ -980,7 +1018,7 @@ def upload_file():
                 "error": errors
             }
         })
-
+    
 @app.route("/api/report")
 def report():
     df = request.args.get("date_from", "")
@@ -1141,62 +1179,54 @@ def search():
     for r in rows: r["日期"] = str(r["日期"])
     return jsonify({"total": total, "page": page, "per_page": per_page, "rows": rows})
 
-@app.route('/api/stats', methods=['GET'])
+@app.route("/api/stats")
 def get_stats():
     conn = get_db()
     c = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     
-    try:
-        # 1. 🔍 修正物理欄位：撈取側邊欄紅點數量 (改回使用資料庫中真正的中文雙引號欄位 "延遲調整")
-        c.execute("""
-            SELECT COUNT(*) 
-            FROM task_records 
-            WHERE "延遲調整" IS NULL 
-              AND "是否延遲" = '是'
-              AND "不需計算" = ''
-              AND "排程需排除" = ''
-              AND "不屬延遲" = ''
-        """)
-        need_check_count = c.fetchone()[0]
-        
-        # 2. 📊 撈取porter_system_status 中現有的卡片統計與時間數據
-        c.execute("SELECT key, value, to_char(updated_at, 'YYYY/MM/DD HH24:MI:SS') as formatted_time FROM porter_system_status")
-        status_rows = c.fetchall()
-        
-        # 預設前端回應容器 (與截圖結構完美對應)
-        status_dict = {
-            "latest_batch": "尚無資料",
-            "updated_at": "-",
-            "total": 0,
-            "success": 0,
-            "skipped": 0,
-            "failed": 0
+    # 1. 撈取最新的系統更新報告狀態
+    c.execute("""
+        SELECT latest_update, excel_total, success_count, skip_count, error_count, updated_at 
+        FROM system_status 
+        ORDER BY id DESC LIMIT 1
+    """)
+    status_row = c.fetchone()
+    
+    status_data = {
+        "latest_update": "無資料",
+        "excel_total": 0,
+        "success_count": 0,
+        "skip_count": 0,
+        "error_count": 0,
+        "updated_at": "-"
+    }
+    if status_row:
+        status_data = {
+            "latest_update": status_row["latest_update"] or "無資料",
+            "excel_total": status_row["excel_total"] or 0,
+            "success_count": status_row["success_count"] or 0,
+            "skip_count": status_row["skip_count"] or 0,
+            "error_count": status_row["error_count"] or 0,
+            "updated_at": status_row["updated_at"] or "-"
         }
         
-        # 將多筆 key-value 資料拆解、標準化回前端格式
-        for row in status_rows:
-            status_dict["updated_at"] = row['formatted_time']  # 最新更動時間戳記
-            if row['key'] == 'latest_sync_date':
-                status_dict["latest_batch"] = row['value']
-            elif row['key'] == 'sync_total':
-                status_dict["total"] = int(row['value'] or 0)
-            elif row['key'] == 'sync_success':
-                status_dict["success"] = int(row['value'] or 0)
-            elif row['key'] == 'sync_skipped':
-                status_dict["skipped"] = int(row['value'] or 0)
-            elif row['key'] == 'sync_failed':
-                status_dict["failed"] = int(row['value'] or 0)
-
-        return jsonify({
-            "need_check_count": need_check_count,
-            "status": status_dict
-        })
-
-    except Exception as e:
-        print(f"❌ 撈取首頁統計狀態發生異常: {str(e)}")
-        return jsonify({"need_check_count": 0, "status": None}), 500
-    finally:
-        conn.close()
+    # 2. 計算側邊欄紅色徽章（尚未審核的人工確認項目筆數）
+    c.execute("""
+        SELECT COUNT(*) FROM task_records 
+        WHERE is_delayed_adjusted IS NULL 
+          AND 是否延遲 = '是' 
+          AND 不需計算 = '' 
+          AND 排程需排除 = '' 
+          AND 不屬延遲 = ''
+    """)
+    badge_count = c.fetchone()[0]
+    
+    conn.close()
+    return jsonify({
+        "success": True,
+        "status": status_data,
+        "badge_count": badge_count
+    })
 
 @app.route("/api/export/report")
 def export_report():
