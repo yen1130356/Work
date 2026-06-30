@@ -40,7 +40,7 @@ scheduler = APScheduler()
 scheduler.init_app(app)
 scheduler.start()
 
-@scheduler.task('cron', id='auto_download_job',minute="*")
+@scheduler.task('cron', id='auto_download_job', hour=7, minute=0)
 def scheduled_auto_sync():
     print(f"📢 [時區檢查] 伺服器本機標準時間(UTC/Local)目前為: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 定時任務啟動：開始自動更新中榮昨日傳送數據...")
@@ -1227,33 +1227,18 @@ def get_stats():
         print(f"⚠️ [警告] 讀取報告狀態失敗，已啟用 Fallback 安全防禦: {str(e)}")
         pass
 
-    # 2. 🔴 計算側邊欄紅色數位貼紙（修正中文欄位雙引號問題與死鎖防護）
+    # 2. 🔴 計算側邊欄紅色數位貼紙
+    #  核心修正：將計數邏輯與前端 /api/check 的撈取邏輯完全對齊，都使用 "延遲調整" = '需檢查' 作為唯一標準。
     badge_count = 0
     try:
         c.execute("""
             SELECT COUNT(*) FROM task_records 
-            WHERE "延遲調整" IS NULL 
-              AND 是否延遲 = '是' 
-              AND 不需計算 = '' 
-              AND 排程需排除 = '' 
-              AND 不屬延遲 = ''
+            WHERE "延遲調整" = '需檢查'
         """)
         badge_count = c.fetchone()[0]
     except Exception as badge_e:
-        print(f"⚠️ [警告] 第一順位紅點計算失敗，嘗試相容性欄位查詢: {str(badge_e)}")
-        try:
-            conn.rollback()  # 發生錯誤時必須立即回滾，避免連線死鎖卡住
-            c.execute("""
-                SELECT COUNT(*) FROM task_records 
-                WHERE is_delayed_adjusted IS NULL 
-                  AND 是否延遲 = '是' 
-                  AND 不需計算 = '' 
-                  AND 排程需排除 = '' 
-                  AND 不屬延遲 = ''
-            """)
-            badge_count = c.fetchone()[0]
-        except:
-            badge_count = 0
+        print(f"⚠️ [警告] 計算側邊欄紅點數量失敗: {str(badge_e)}")
+        badge_count = 0
 
     conn.close()
     
