@@ -1184,14 +1184,7 @@ def get_stats():
     conn = get_db()
     c = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     
-    # 1. 撈取最新的系統更新報告狀態
-    c.execute("""
-        SELECT latest_update, excel_total, success_count, skip_count, error_count, updated_at 
-        FROM system_status 
-        ORDER BY id DESC LIMIT 1
-    """)
-    status_row = c.fetchone()
-    
+    # 建立一個安全的預設結構字典，防止前端抓不到資料而報錯
     status_data = {
         "latest_update": "無資料",
         "excel_total": 0,
@@ -1200,28 +1193,75 @@ def get_stats():
         "error_count": 0,
         "updated_at": "-"
     }
-    if status_row:
-        status_data = {
-            "latest_update": status_row["latest_update"] or "無資料",
-            "excel_total": status_row["excel_total"] or 0,
-            "success_count": status_row["success_count"] or 0,
-            "skip_count": status_row["skip_count"] or 0,
-            "error_count": status_row["error_count"] or 0,
-            "updated_at": status_row["updated_at"] or "-"
-        }
-        
-    # 2. 計算側邊欄紅色徽章（尚未審核的人工確認項目筆數）
-    c.execute("""
-        SELECT COUNT(*) FROM task_records 
-        WHERE is_delayed_adjusted IS NULL 
-          AND 是否延遲 = '是' 
-          AND 不需計算 = '' 
-          AND 排程需排除 = '' 
-          AND 不屬延遲 = ''
-    """)
-    badge_count = c.fetchone()[0]
     
+    try:
+        # 1. 配合您資料庫的 key-value 設計，將所有統計狀態一次撈出
+        c.execute("""
+            SELECT key, value, to_char(updated_at, 'YYYY/MM/DD HH24:MI:SS') as t_str 
+            FROM porter_system_status 
+            WHERE key IN ('latest_sync_date', 'sync_total', 'sync_success', 'sync_skipped', 'sync_failed')
+        """)
+        rows = c.fetchall()
+        
+        # 將資料庫一筆一筆的 key-value 拆解對齊並塞入預設字典
+        for row in rows:
+            k = row['key']
+            v = row['value']
+            t = row['t_str']
+            
+            if k == 'latest_sync_date':
+                status_data["latest_update"] = v or "無資料"
+            elif k == 'sync_total':
+                status_data["excel_total"] = int(v) if (v and v.isdigit()) else 0
+            elif k == 'sync_success':
+                status_data["success_count"] = int(v) if (v and v.isdigit()) else 0
+            elif k == 'sync_skipped':
+                status_data["skip_count"] = int(v) if (v and v.isdigit()) else 0
+            elif k == 'sync_failed':
+                status_data["error_count"] = int(v) if (v and v.isdigit()) else 0
+            
+            # 只要有更新時間就進行保留，記錄最後一筆更新時間
+            if t:
+                status_data["updated_at"] = t
+
+    except Exception as e:
+        print(f"⚠️ [警告] 撈取數據匯入報告狀態時出錯（可能資料表尚未建立或欄位有衝突）: {str(e)}")
+        # 出錯時不中斷，維持預設 0 筆回傳，防止前端崩潰爆出 500
+        pass
+
+    # 2. 計算側邊欄紅色數位貼紙（尚未審核的人工確認項目筆數）
+    # 使用符合您原本資料庫實際使用的中文名稱「延遲調整」進行篩選，加入安全防禦機制
+    badge_count = 0
+    try:
+        c.execute("""
+            SELECT COUNT(*) FROM task_records 
+            WHERE "延遲調整" IS NULL 
+              AND 是否延遲 = '是' 
+              AND 不需計算 = '' 
+              AND 排程需排除 = '' 
+              AND 不屬延遲 = ''
+        """)
+        badge_count = c.fetchone()[0]
+    except Exception as badge_e:
+        print(f"⚠️ [警告] 計算未審核紅點筆數時出錯: {str(badge_e)}")
+        # 若資料表名稱打架則 fallback 為 0 筆，保障全網頁暢通
+        try:
+            conn.rollback() # 發生異常時回滾事物，避免連線死鎖
+            c.execute("""
+                SELECT COUNT(*) FROM task_records 
+                WHERE is_delayed_adjusted IS NULL 
+                  AND 是否延遲 = '是' 
+                  AND 不需計算 = '' 
+                  AND 排程需排除 = '' 
+                  AND 不屬延遲 = ''
+            """)
+            badge_count = c.fetchone()[0]
+        except:
+            badge_count = 0
+
     conn.close()
+    
+    # 最終打包成 JSON 格式吐給前端 main.js
     return jsonify({
         "success": True,
         "status": status_data,
