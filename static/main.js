@@ -316,7 +316,7 @@ async function loadReport() {
         if (!canvas) return;
         
         const labels = data.map(r => r.日期 || '').reverse();
-        const adj = data.map(r => r.修正後延延迟率 || 0).reverse();
+        const adj = data.map(r => r.修正後延遲率 || 0).reverse();
         
         if (reportChart) { reportChart.destroy(); }
         

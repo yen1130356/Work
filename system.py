@@ -1024,7 +1024,7 @@ def report():
     df = request.args.get("date_from", "")
     dt = request.args.get("date_to", "")
     
-    conditions = ["\"延遲調整\" IS NOT NULL"]
+    conditions = ["任務時間 IS NOT NULL AND 任務時間 != ''"]
     params = []
     
     if df: 
@@ -1270,7 +1270,7 @@ def export_report():
     df = request.args.get("date_from", "")
     dt = request.args.get("date_to", "")
     
-    conditions = ["\"延遲調整\" IS NOT NULL"]
+    conditions = ["任務時間 IS NOT NULL AND 任務時間 != ''"]
     params = []
     if df: 
         conditions.append("任務時間 >= %s")
