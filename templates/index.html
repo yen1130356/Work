@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>台中榮總傳送系統</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ version }}">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <h1>台中榮總<br>傳送系統</h1>
+    <span>延遲率管理平台</span>
+  </div>
+  <div class="nav">
+    <button class="nav-item active" onclick="showPage('import')">
+      <span class="icon">📂</span> 資料管理
+    </button>
+    
+    <button class="nav-item" id="nav-check" onclick="showPage('check')">
+      <span class="icon">⚠️</span> 需確認項目
+      <span class="nav-badge" id="badge-count" style="display:none">0</span>
+    </button>
+    
+    <button class="nav-item" onclick="showPage('report')">
+      <span class="icon">📈</span> 延遲率報表
+    </button>
+    
+    <button class="nav-item" onclick="showPage('search')">
+      <span class="icon">🔍</span> 查詢資料
+    </button>
+
+    <button class="nav-item" onclick="showPage('rules')">
+      <span class="icon">⚙️</span> 規則設定
+    </button>
+  </div>
+</nav>
+
+<main class="main">
+
+  <div class="page active" id="page-import">
+    <div class="page-title">資料管理</div>
+    
+    <div class="chart-card" style="margin-bottom: 20px; border-left: 4px solid var(--accent); position: relative;">
+      <h3 style="margin-bottom:10px;">🤖 1. 網頁資料同步</h3>
+      
+      <div class="update-status-alert" style="position: absolute; right: 24px; top: 20px; background: rgba(52, 211, 153, 0.1); border: 1px solid var(--green); padding: 6px 12px; border-radius: 6px; font-size: 13px; color: var(--green);">
+          📈 已定時自動更新至：<strong id="latest-update-time" class="mono">載入中...</strong>
+      </div>
+
+      <div style="display: flex; gap: 15px; margin-bottom: 15px; align-items: center; max-width: 500px;">
+        <div style="flex: 1;" class="form-group">
+          <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:4px;">開始日期</label>
+          <input type="date" id="syncDateFrom">
+        </div>
+        <div style="flex: 1;" class="form-group">
+          <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:4px;">結束日期</label>
+          <input type="date" id="syncDateTo">
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="btn-auto-sync" onclick="doAutoSync()">
+        🔄 更新指定區間數據
+      </button>
+    </div>
+
+    <div class="chart-card" style="margin-bottom: 20px; border-left: 4px solid var(--accent); position: relative;">
+      <h3>📁 2. 手動上傳 Excel 報表</h3>
+      <div class="upload-zone" id="uploadZone" onclick="document.getElementById('excelFile').click()">
+        <div class="upload-icon">📄</div>
+        <p>點擊或拖曳 Excel 檔案到這裡</p>
+      </div>
+      <input type="file" id="excelFile" accept=".xlsx, .xls" style="display: none;">
+      <div style="display:flex;gap:12px;margin-bottom:20px">
+        <button class="btn btn-primary" id="btn-upload" disabled onclick="doUpload()">
+          ⬆️ 上傳並匯入
+        </button>
+      </div>
+    </div>
+    <div id="page-import" class="page active">
+      <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 12px;">
+        <div id="update-status-alert" style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: bold; display: none;">
+        <span id="latest-date-text">🍏 系統最新數據已更新至：載入中...</span>
+      </div>
+    </div>
+
+    <div id="upload-stats-card" class="chart-card" style="margin-bottom: 20px; padding: 15px; background: #ffffff; border-radius: 8px; border: 1px solid #e5e6eb; transition: all 0.3s ease;">
+      <h4 style="margin: 0 0 12px 0; color: #1d2129; font-size: 14px; display: flex; align-items: center; gap: 6px;">
+        📊 最近一次數據匯入報告
+      </h4>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px;">
+        <span style="background: #f2f3f5; color: #4e5969; padding: 6px 12px; border-radius: 4px; font-weight: 500;">
+          Excel 原始 <strong id="stat-total" style="color: #1d2129;">0</strong> 筆
+        </span>
+        <span style="background: #e8f5e9; color: #2e7d32; padding: 6px 12px; border-radius: 4px; font-weight: 500;">
+          成功新增或覆蓋 <strong id="stat-success" style="color: #1b5e20;">0</strong> 筆
+        </span>
+        <span style="background: #fff3e0; color: #ef6c00; padding: 6px 12px; border-radius: 4px; font-weight: 500;">
+          已存在跳過 <strong id="stat-skipped" style="color: #e65100;">0</strong> 筆
+        </span>
+        <span style="background: #ffebee; color: #c62828; padding: 6px 12px; border-radius: 4px; font-weight: 500;">
+          錯誤失敗 <strong id="stat-error" style="color: #b71c1c;">0</strong> 筆
+        </span>
+      </div>
+    </div>
+
+  <div class="page" id="page-check">
+    <div class="page-title">需確認項目</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>單號</th><th>日期</th><th>任務</th><th>傳送人員</th><th>特別指示</th><th>原因</th><th>操作</th>
+        </tr></thead>
+        <tbody id="check-table"><tr><td colspan="7" style="text-align:center;color:var(--text3);padding:30px">載入中...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="page" id="page-report">
+    <div class="page-title">延遲率報表</div>
+    
+    <div class="card" style="margin-bottom: 20px; padding: 15px;">
+      <div class="filter-grid">
+        <div class="form-group">
+          <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:4px;">統計起日</label>
+          <input type="date" id="reportDateFrom">
+        </div>
+        <div class="form-group">
+          <label style="display:block; font-size:12px; color:var(--text3); margin-bottom:4px;">統計迄日</label>
+          <input type="date" id="reportDateTo">
+        </div>
+        <div class="form-group search-btn-group">
+          <button class="btn btn-search" onclick="loadReport()">📊 篩選報表</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <h3>修正後最終延遲率趨勢</h3>
+      <div class="chart-container"><canvas id="reportChart"></canvas></div>
+    </div>
+    
+    <div class="table-wrap">
+      <div style="padding: 14px; display: flex; justify-content: flex-end; gap: 10px; align-items: center;">
+        <button class="btn btn-success btn-sm" id="btn-export-report" onclick="exportReportWithDate()">📥 下載統計報表 Excel</button>
+      </div>
+      <table>
+        <thead><tr>
+          <th>日期</th><th>總任務數</th><th>修正後延遲數</th><th>修正後延遲率</th>
+        </tr></thead>
+        <tbody id="report-table"><tr><td colspan="4" style="text-align:center;color:var(--text3);padding:30px">載入中...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="page" id="page-search">
+    <div class="page-title">查詢資料</div>
+    <div class="filter-section card">
+      <h2>任務條件篩選</h2>
+      <div class="filter-grid">
+        <div class="form-group">
+          <label>開始日期</label>
+          <input type="date" id="searchDateFrom">
+        </div>
+        <div class="form-group">
+          <label>結束日期</label>
+          <input type="date" id="searchDateTo">
+        </div>
+        <div class="form-group">
+          <label>任務名稱</label>
+          <select id="searchTask">
+            <option value="">全部</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>傳送人員</label>
+          <select id="searchPerson">
+            <option value="">全部</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>調整後狀態</label>
+          <select id="searchStatus">
+            <option value="">全部</option>
+            <option value="延遲">延遲</option>
+            <option value="未延遲">未延遲</option>
+            <option value="需檢查">需檢查</option>
+          </select>
+        </div>
+        <div class="form-group search-btn-group">
+          <button class="btn btn-search" id="btnSearch" onclick="doSearch(1)">🔍 開始查詢</button>
+        </div>
+      </div>
+    </div>
+    <div id="search-info" style="font-size:12px;color:var(--text3);margin-bottom:12px"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>單號</th><th>日期</th><th>任務</th><th>傳送人員</th><th>派工單位</th><th>原始狀態</th><th>修正後狀態</th><th>排除原因</th>
+        </tr></thead>
+        <tbody id="search-table"><tr><td colspan="8" style="text-align:center;color:var(--text3);padding:30px">請輸入條件查詢</td></tr></tbody>
+      </table>
+    </div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; flex-wrap: wrap; gap: 15px;">
+      <div class="pagination" id="pagination"></div>
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text2);">
+        <span>每頁顯示</span>
+        <select id="searchPerPage" onchange="doSearch(1)" style="width: 80px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; height: 30px; cursor: pointer;">
+          <option value="15">15 筆</option>
+          <option value="30">30 筆</option>
+          <option value="50">50 筆</option>
+          <option value="100">100 筆</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" id="page-rules">
+    <div class="page-title">規則設定</div>
+    
+    <div class="rule-tabs" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 10px;">
+      <button class="btn btn-ghost active" id="tab-wait" onclick="switchRuleTab('wait_reasons')">⏳ 等待原因排除</button>
+      <button class="btn btn-ghost" id="tab-keyword" onclick="switchRuleTab('keywords')">🔤 特別指示關鍵字</button>
+    </div>
+
+    <div class="card" id="rule-form-container" style="margin-bottom: 20px; background: var(--surface2); padding: 20px; border-radius: 8px; border: 1px solid var(--border);">
+      <h3 style="margin-bottom: 15px; font-size: 14px;" id="rule-form-title">➕ 新增等待原因規則</h3>
+      <div id="rule-inputs-flex" style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+        </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr id="rule-table-header">
+            </tr>
+        </thead>
+        <tbody id="rule-table-body">
+          <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text3);">載入中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <h3>✏️ 人工確認修正</h3>
+    <input type="hidden" id="edit-id">
+    <div class="modal-note" id="edit-note-display"></div>
+    <div class="modal-field">
+      <label>特別指示內容</label>
+      <textarea id="edit-special" readonly style="color:var(--text3)"></textarea>
+    </div>
+    <div class="modal-field">
+      <label>時間描述</label>
+      <input type="text" id="edit-note-time" placeholder="例：2026/05/18 14:30">
+    </div>
+    <div class="modal-field">
+      <label>開始／結束說明</label>
+      <input type="text" id="edit-note-open-close" placeholder="例：先去：X光室 再去：超音波室">
+    </div>
+    <div class="modal-field">
+      <details style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; cursor: pointer;">
+        <summary style="font-size: 12px; color: var(--accent); font-weight: 500;">📋 點擊展開/收合 原始完整任務明細</summary>
+        <div id="edit-full-details" style="font-size: 12px; color: var(--text2); line-height: 1.8; padding-top: 10px; max-height: 250px; overflow-y: auto; font-family: 'JetBrains Mono', sans-serif;">
+          載入中...
+        </div>
+      </details>
+    </div>
+    <div class="modal-field" style="margin-top: 15px;">
+      <label style="color: var(--yellow); font-weight: bold; display: flex; align-items: center; gap: 6px;">
+        📦 同單號 / 同病人當日 套餐關聯任務明細
+      </label>
+      <div style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 4px; max-height: 250px; overflow-y: auto;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
+          <thead>
+            <tr style="background: var(--surface2); color: var(--text); border-bottom: 1px solid var(--border);">
+              <th style="padding: 8px 6px;">任務名稱</th>
+              <th style="padding: 8px 6px;">傳送員</th>
+              <th style="padding: 8px 6px;">任務時間</th>
+              <th style="padding: 8px 6px;">原判定</th>
+              <th style="padding: 8px 6px;">延遲調整</th>
+              <th style="padding: 8px 6px;">時間描述/說明</th>
+            </tr>
+          </thead>
+          <tbody id="package-table-body" style="color: var(--text2);">
+            <tr><td colspan="6" style="text-align:center; padding:15px; color:var(--text3);">載入中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-field">
+      <label>修正為</label>
+      <select id="edit-status">
+        <option value="未延遲">✅ 未延遲（排除此筆）</option>
+        <option value="延遲">❌ 延遲（維持延遲）</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveEdit()">儲存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="{{ url_for('static', filename='main.js') }}?v={{ version }}"></script>
+</body>
+</html>
